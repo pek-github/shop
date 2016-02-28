@@ -8,7 +8,7 @@
             [shop.db-access :as db]
             [shop.logistics-service :as logistics]
             [shop.utilities :as utils]
-            ))
+  ))
 
 
 ; -------
@@ -35,47 +35,51 @@
 (defn successful?
   "checks if the response is successful, or not"
   [resp]
-  (= 201 (get resp :status)))
+  (let [st (:status resp)]
+    (and (<= 200 st) (< st 300))))
 
 (defn update-response
-  ""
+  "updates the response with the invoice"
   [resp invoice desired-amount]
-  (let [price-per-item (get (get resp :body) :price-per-item)
+  (let [price-per-item (-> resp :body :price-per-item)
         total-cost (str (* desired-amount price-per-item))
         updated-invoice (clojure.string/replace invoice "__cost__" total-cost)
-        updated-body (assoc (get resp :body) :invoice updated-invoice)
-        update-resp (assoc resp :body updated-body)]
-    update-resp))
+        updated-body (assoc (:body resp) :invoice updated-invoice)
+        updated-resp (assoc resp :body updated-body)]
+    updated-resp))
 
 
 ; -------
 ; DB access and Data retrieval
 ; -------
 
+(defn- retrieval-helper
+  "a helper function"
+  [price]
+  (if (>= price 0)
+    (create-success-message "Your request succeeded" price)
+    (create-error-response 601 "Your request cannot be satisfied (not enough books in stock?)")))
+
 (defn retrieve-books-by-title
   "retrieves a book from the DB, searching it by its title"
   [book-title desired-amount]
   (let [price (db/get-books-by-title book-title desired-amount)]
-    (if (< price 0)
-      (create-error-response 601 "Your request cannot be satisfied (not enough books in stock?)")
-      (create-success-message "Your request succeeded" price))))
+    (retrieval-helper price)))
 
 (defn retrieve-books-by-isbn
   "retrieves a book from the DB, searching it by its isbn"
   [book-isbn desired-amount]
   (let [price (db/get-books-by-isbn book-isbn desired-amount)]
-    (if (< price 0)
-      (create-error-response 601 "Your request cannot be satisfied (not enough books in stock?)")
-      (create-success-message "Your request succeeded" price))))
+    (retrieval-helper price)))
 
 (defn retrieve-books
-  "retrieves a book from the DB"
+  "retrieves a book from the DB ;
+  it also includes an artificial delay of 1 second"
   [book-title book-isbn desired-amount]
-  (do
-    (utils/sleep 1)
-    (if (nil? book-isbn)
-      (retrieve-books-by-title book-title desired-amount)
-      (retrieve-books-by-isbn book-isbn desired-amount))))
+  (utils/sleep 1)
+  (if (nil? book-isbn)
+    (retrieve-books-by-title book-title desired-amount)
+    (retrieve-books-by-isbn book-isbn desired-amount)))
 
 
 ; -------
@@ -85,11 +89,11 @@
 (defn process-request
   "processes a valid request"
   [book-title book-isbn desired-amount customer-name]
-  (do (def invoice (future (logistics/invoice-service customer-name)))
-      (def resp (retrieve-books book-title book-isbn desired-amount))
-      (if (successful? resp)
-        (update-response resp @invoice desired-amount)
-        resp)))
+  (let [invoice (future (logistics/invoice-service customer-name))
+        resp (retrieve-books book-title book-isbn desired-amount)]
+    (if (successful? resp)
+      (update-response resp @invoice desired-amount)
+      resp)))
 
 (defn handle-request
   "handles the REST request"
@@ -101,7 +105,7 @@
         desired-amount (utils/convert-to-integer desired-amount-raw)]
     (cond
       (and (nil? book-title) (nil? book-isbn))
-        (create-error-response 400 "Book title or book isbn should be provided")
+        (create-error-response 400 "One of book title, book isbn should be provided")
       (and (not (nil? book-title)) (not (nil? book-isbn)))
         (create-error-response 400 "Only one of book title, book isbn should be provided")
       (nil? desired-amount)
@@ -120,19 +124,21 @@
 ; -------
 
 (defroutes app-routes
+  ; Testing-only example:
   ; http://localhost:8080/
   (GET "/" [] "Hello World")
 
-  ; http://localhost:8080/book?title=cooking&amount=2
+  ; Usage Example:
+  ; http://localhost:8080/book?title=cooking&amount=2&customer=john
   (GET "/book" request (handle-request request))
 
-  ; others
+  ; Others
   (route/not-found "Not Found"))
 
 ; Define the Application
 (def app
   (-> app-routes
-      ; {:keywords? true} when the body is parsed makes the keys return as keywords
+      ; {:keywords? true} when the body is parsed, makes the keys return as keywords
       ; and not as strings
       (middleware/wrap-json-body {:keywords? true})
       (middleware/wrap-json-response)
@@ -143,4 +149,3 @@
   "starts the web application"
   []
   (web/run app))
-

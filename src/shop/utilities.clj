@@ -21,3 +21,7 @@
   [seconds]
   (Thread/sleep (* 1000 seconds)))
 
+(defn sleep-random-millisecs
+  "makes the current thread to sleep for a random number of milliseconds in range [low, high]"
+  [low high]
+  (Thread/sleep (random-number low high)))
